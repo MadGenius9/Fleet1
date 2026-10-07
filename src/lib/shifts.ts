@@ -73,4 +73,3 @@ export function getLogDocId(
   }
   return `${date}_${sanitize(arg2)}_${sanitize(arg3)}`.slice(0, 120);
 }
-
