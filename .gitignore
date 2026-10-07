@@ -1,0 +1,11 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Local Firebase client configuration; use environment variables in new tasks.
+firebase-applet-config.json

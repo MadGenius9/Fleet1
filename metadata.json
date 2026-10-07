@@ -1,0 +1,8 @@
+{
+  "name": "Fleet 1 Pump Maintenance Log",
+  "description": "Mobile-first Fleet 1 pump maintenance log with live Firestore sync, offline queueing, day view, and printable reporting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,107 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidFleet(data) {
+      return data.keys().hasAll(['name', 'stations', 'pumps']) &&
+        data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+        data.stations is list && data.stations.size() <= 200 &&
+        data.pumps is list && data.pumps.size() <= 500 &&
+        (!('stationPumps' in data) || data.stationPumps is map) &&
+        (!('finalizedSheets' in data) || data.finalizedSheets is map) &&
+        (!('currentStage' in data) || data.currentStage is number || data.currentStage is string) &&
+        (!('shiftNotes' in data) || data.shiftNotes is map) &&
+        (!('finalizedHandoffs' in data) || data.finalizedHandoffs is map);
+    }
+
+    function isValidPumpOpsEvent(data) {
+      return data.keys().hasAll([
+        'date', 'shift', 'station', 'pump',
+        'eventType', 'status', 'startedAt', 'operator',
+        'createdAt', 'updatedAt'
+      ]) &&
+      data.date is string && data.date.size() == 10 &&
+      data.shift is string && (data.shift == 'day' || data.shift == 'night') &&
+      data.station is string && data.station.size() <= 50 &&
+      data.pump is string && data.pump.size() <= 50 &&
+      data.eventType is string && data.eventType.size() <= 50 &&
+      data.status is string && data.status.size() <= 30 &&
+      data.startedAt is number &&
+      data.operator is string && data.operator.size() <= 100 &&
+      data.createdAt is number &&
+      data.updatedAt is number;
+    }
+
+    function isValidLog(data) {
+      return data.keys().hasAll([
+        'date', 'stationNumber', 'pumpNumber',
+        'enteredBy', 'createdAt', 'updatedAt'
+      ]) &&
+      data.date is string && data.date.size() == 10 && data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+      data.stationNumber is string && data.stationNumber.size() > 0 && data.stationNumber.size() <= 50 &&
+      data.pumpNumber is string && data.pumpNumber.size() > 0 && data.pumpNumber.size() <= 50 &&
+      (!('shift' in data) || (data.shift is string && (data.shift == 'day' || data.shift == 'night' || data.shift == 'legacy'))) &&
+      (!('pumpHours' in data) || data.pumpHours == null || data.pumpHours is number) &&
+      (!('deckEngHours' in data) || data.deckEngHours == null || data.deckEngHours is number) &&
+      (!('notes' in data) || data.notes is string) &&
+      (!('info' in data) || data.info is string) &&
+      (!('packing' in data) || data.packing is string) &&
+      (!('plunger' in data) || data.plunger is string) &&
+      (!('vs' in data) || data.vs is string) &&
+      (!('finalized' in data) || data.finalized is bool) &&
+      (!('finalizedAt' in data) || data.finalizedAt is number) &&
+      (!('finalizedBy' in data) || data.finalizedBy is string) &&
+      data.enteredBy is string && data.enteredBy.size() <= 100 &&
+      data.createdAt is number &&
+      data.updatedAt is number;
+    }
+
+    // Fleets collection
+    match /fleets/{fleetId} {
+      allow get: if isSignedIn() && isValidId(fleetId);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(fleetId) && isValidFleet(incoming());
+      allow update: if isSignedIn() && isValidId(fleetId) && isValidFleet(incoming());
+      allow delete: if false;
+
+      // Logs subcollection
+      match /logs/{logId} {
+        allow get: if isSignedIn() && isValidId(fleetId) && isValidId(logId);
+        allow list: if isSignedIn() && isValidId(fleetId);
+        allow create: if isSignedIn() && isValidId(fleetId) && isValidId(logId) && isValidLog(incoming());
+        allow update: if isSignedIn() && isValidId(fleetId) && isValidId(logId) && isValidLog(incoming());
+        allow delete: if isSignedIn() && isValidId(fleetId) && isValidId(logId);
+      }
+
+      // Operational Events subcollection
+      match /pumpOpsEvents/{eventId} {
+        allow get: if isSignedIn() && isValidId(fleetId) && isValidId(eventId);
+        allow list: if isSignedIn() && isValidId(fleetId);
+        allow create: if isSignedIn() && isValidId(fleetId) && isValidId(eventId) && isValidPumpOpsEvent(incoming());
+        allow update: if isSignedIn() && isValidId(fleetId) && isValidId(eventId) && isValidPumpOpsEvent(incoming());
+        allow delete: if isSignedIn() && isValidId(fleetId) && isValidId(eventId);
+      }
+    }
+  }
+}

@@ -1,0 +1,197 @@
+{
+  "entities": {
+    "Fleet": {
+      "title": "Fleet",
+      "description": "Fleet configuration with station list and pump fleet directory",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of the fleet",
+          "maxLength": 100
+        },
+        "stations": {
+          "type": "array",
+          "description": "List of active station numbers or identifiers"
+        },
+        "pumps": {
+          "type": "array",
+          "description": "List of pump numbers or identifiers"
+        },
+        "stationPumps": {
+          "type": "object",
+          "description": "Mapping of station names to assigned pump numbers"
+        }
+      },
+      "required": ["name", "stations", "pumps"]
+    },
+    "MaintenanceLog": {
+      "title": "MaintenanceLog",
+      "description": "Daily pump hours meter reading record for a specific station and pump",
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string",
+          "description": "Date of meter reading in YYYY-MM-DD format",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "stationNumber": {
+          "type": "string",
+          "description": "Station number identifier",
+          "maxLength": 50
+        },
+        "pumpNumber": {
+          "type": "string",
+          "description": "Pump unit identifier",
+          "maxLength": 50
+        },
+        "shift": {
+          "type": "string",
+          "description": "Shift identifier: day, night, or legacy",
+          "enum": ["day", "night", "legacy"]
+        },
+        "pumpHours": {
+          "type": ["number", "null"],
+          "description": "Current pump runtime hours (null if unentered)"
+        },
+        "deckEngHours": {
+          "type": ["number", "null"],
+          "description": "Deck engine runtime hours (null if unentered)"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Optional notes for the pump reading",
+          "maxLength": 1000
+        },
+        "enteredBy": {
+          "type": "string",
+          "description": "Name or identifier of technician who entered the record",
+          "maxLength": 100
+        },
+        "finalized": {
+          "type": "boolean",
+          "description": "Whether the daily sheet is finalized"
+        },
+        "finalizedAt": {
+          "type": "number",
+          "description": "Timestamp when finalized"
+        },
+        "finalizedBy": {
+          "type": "string",
+          "description": "Technician who finalized the sheet"
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Epoch timestamp in milliseconds when created"
+        },
+        "updatedAt": {
+          "type": "number",
+          "description": "Epoch timestamp in milliseconds when last updated"
+        }
+      },
+      "required": [
+        "date",
+        "stationNumber",
+        "pumpNumber",
+        "enteredBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PumpOpsEvent": {
+      "title": "PumpOpsEvent",
+      "description": "Operational event or issue recorded for a pump during a shift (e.g. pump down, repair, return to service, swap)",
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string",
+          "description": "Date in YYYY-MM-DD format"
+        },
+        "shift": {
+          "type": "string",
+          "description": "Shift: day or night",
+          "enum": ["day", "night"]
+        },
+        "station": {
+          "type": "string",
+          "description": "Station name"
+        },
+        "pump": {
+          "type": "string",
+          "description": "Pump unit identifier"
+        },
+        "eventType": {
+          "type": "string",
+          "description": "Type of event: pump_down, repair_started, returned_to_service, derated, watch_item, pump_swap, general_note"
+        },
+        "status": {
+          "type": "string",
+          "description": "Operational status: RUNNING, DERATED, DOWN, REPAIRING, STANDBY"
+        },
+        "stage": {
+          "type": ["number", "string", "null"],
+          "description": "Stage number during which the event occurred"
+        },
+        "category": {
+          "type": "string",
+          "description": "Issue category (e.g. FLUID END, POWER END, ENGINE)"
+        },
+        "component": {
+          "type": "string",
+          "description": "Component (e.g. PACKING, D-RINGS, VALVE / SEAT)"
+        },
+        "holes": {
+          "type": "array",
+          "description": "Hole positions (e.g. [1, 2, 3])"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Operational notes"
+        },
+        "operator": {
+          "type": "string",
+          "description": "Operator identifier"
+        },
+        "startedAt": {
+          "type": "number",
+          "description": "Timestamp when downtime or issue started"
+        },
+        "repairStartedAt": {
+          "type": ["number", "null"],
+          "description": "Timestamp when repair started"
+        },
+        "resolvedAt": {
+          "type": ["number", "null"],
+          "description": "Timestamp when issue was resolved"
+        },
+        "downtimeMinutes": {
+          "type": ["number", "null"],
+          "description": "Calculated downtime in minutes"
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Timestamp created"
+        },
+        "updatedAt": {
+          "type": "number",
+          "description": "Timestamp updated"
+        }
+      },
+      "required": ["date", "shift", "station", "pump", "eventType", "status", "startedAt", "operator", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/fleets/{fleetId}": {
+      "schema": "Fleet",
+      "description": "Fleet configuration and fleet directory containing stations and pumps"
+    },
+    "/fleets/{fleetId}/logs/{logId}": {
+      "schema": "MaintenanceLog",
+      "description": "Pump maintenance logs for a specific fleet"
+    },
+    "/fleets/{fleetId}/pumpOpsEvents/{eventId}": {
+      "schema": "PumpOpsEvent",
+      "description": "Operational pump events, pump downs, repairs, and handoff records"
+    }
+  }
+}
