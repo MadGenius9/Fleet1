@@ -23,7 +23,9 @@ import {
   runTransaction,
   type Unsubscribe
 } from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
+import { flushQueueBatch } from './offlineQueue';
+import { validateEventPatch, WriteConflictError } from './eventMutations';
+import { firebaseConfig } from './firebaseConfig';
 import type { FleetDoc, MaintenanceLog, QueuedWrite, SyncStatus, SyncErrorInfo } from '../types';
 import { applyFleetMutation, AssignmentConflictError } from './fleetMutations';
 
@@ -101,8 +103,7 @@ export function getQueuedWrites(): QueuedWrite[] {
     const raw = localStorage.getItem(QUEUE_STORAGE_KEY) || localStorage.getItem('fleet1_offline_write_queue_v1');
     return raw ? JSON.parse(raw) : [];
   } catch (err) {
-    console.error('Failed to read offline queue from localStorage', err);
-    return [];
+    throw new Error('Cannot read the offline queue. Do not clear browser storage; recover the saved readings first.', { cause: err });
   }
 }
 
@@ -110,7 +111,7 @@ export function saveQueuedWrites(queue: QueuedWrite[]) {
   try {
     localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(queue));
   } catch (err) {
-    console.error('Failed to persist offline queue', err);
+    throw new Error('Cannot save the offline queue. This change is not safely stored; free browser storage and retry.', { cause: err });
   }
 }
 
@@ -186,82 +187,45 @@ export async function flushOfflineQueue(
     return { successful: 0, failed: 0 };
   }
 
-  const queue = getQueuedWrites();
-  if (queue.length === 0) return { successful: 0, failed: 0 };
-
   isFlushingQueue = true;
-  let successful = 0;
-  let failed = 0;
-  const remainingQueue: QueuedWrite[] = [];
-
   try {
-    for (const item of queue) {
-      // Do not endlessly retry a permanent assignment conflict on automatic background sync cycles
-      if ((item as any).isConflict) {
-        remainingQueue.push(item);
-        continue;
-      }
-
-      try {
-        if (item.type === 'set' || item.type === 'update') {
-          const docRef = doc(db, item.path);
-          const sanitizedPayload = sanitizeFirestoreData(item.data || {});
-          await setDoc(docRef, sanitizedPayload, { merge: true });
-          successful++;
-        } else if (item.type === 'delete') {
-          const docRef = doc(db, item.path);
-          await deleteDoc(docRef);
-          successful++;
-        } else if (item.type === 'fleet-update') {
-          const docRef = doc(db, item.path);
-          if (item.data?.mutation) {
-            await runTransaction(db, async (tx) => {
-              const sfDoc = await tx.get(docRef);
-              const currentServerData: FleetDoc = sfDoc.exists()
-                ? (sfDoc.data() as FleetDoc)
-                : DEFAULT_FLEET_DATA;
-              const merged = applyFleetMutation(currentServerData, item.data.mutation);
-              tx.set(docRef, sanitizeFirestoreData(merged), { merge: true });
-            });
-          } else {
-            const sanitizedPayload = sanitizeFirestoreData(item.data || {});
-            await setDoc(docRef, sanitizedPayload, { merge: true });
-          }
-          successful++;
+    return await flushQueueBatch(getQueuedWrites, saveQueuedWrites, async (item) => {
+      const docRef = doc(db, item.path);
+      if (item.type === 'event-update') {
+        await runTransaction(db, async (tx) => {
+          const snapshot = await tx.get(docRef);
+          if (!snapshot.exists()) throw new WriteConflictError();
+          validateEventPatch(snapshot.data(), item.data, item.expected || {});
+          tx.update(docRef, sanitizeFirestoreData(item.data));
+        });
+      } else if (item.type === 'set' && item.path.includes('/pumpOpsEvents/')) {
+        // Stable event IDs make create retries safe without overwriting later edits.
+        await runTransaction(db, async (tx) => {
+          const snapshot = await tx.get(docRef);
+          if (!snapshot.exists()) tx.set(docRef, sanitizeFirestoreData(item.data));
+        });
+      } else if (item.type === 'set' || item.type === 'update') {
+        await setDoc(docRef, sanitizeFirestoreData(item.data || {}), { merge: true });
+      } else if (item.type === 'delete') {
+        await deleteDoc(docRef);
+      } else if (item.type === 'fleet-update') {
+        if (item.data?.mutation) {
+          await runTransaction(db, async (tx) => {
+            const snapshot = await tx.get(docRef);
+            const current = snapshot.exists() ? snapshot.data() as FleetDoc : DEFAULT_FLEET_DATA;
+            tx.set(docRef, sanitizeFirestoreData(applyFleetMutation(current, item.data.mutation)));
+          });
+        } else {
+          // Preserve old queued writes; new operations always use targeted mutations.
+          await setDoc(docRef, sanitizeFirestoreData(item.data || {}), { merge: true });
         }
-      } catch (err) {
-        const isConflict = err instanceof AssignmentConflictError || (err as any)?.isAssignmentConflict;
-        const errMessage = err instanceof Error ? err.message : String(err);
-        console.warn('Queue flush retry failed for item:', item, err);
-        failed++;
-        item.retryCount = (item.retryCount || 0) + 1;
-        item.lastError = errMessage;
-        item.lastAttempt = Date.now();
-        item.status = 'failed';
-        if (isConflict) {
-          // Mark as permanent conflict so transactions do not endlessly retry it
-          (item as any).isConflict = true;
-          (item as any).conflictDetails = {
-            station: (err as any).station,
-            currentPump: (err as any).currentPump,
-            requestedPump: (err as any).requestedPump,
-            expectedOldPump: (err as any).expectedOldPump,
-          };
-        }
-        // NEVER drop failed queue items! Always preserve them so they remain recoverable!
-        remainingQueue.push(item);
+      } else {
+        throw new Error('Unknown queued write type; retained for recovery.');
       }
-      if (onProgress) {
-        onProgress(remainingQueue.length);
-      }
-    }
-
-    saveQueuedWrites(remainingQueue);
+    }, onProgress);
   } finally {
     isFlushingQueue = false;
   }
-
-  return { successful, failed };
 }
 
 export function getSyncErrors(): SyncErrorInfo[] {

@@ -80,7 +80,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   return (
     <header className="bg-slate-950 border-b border-slate-800 sticky top-0 z-40 print:hidden select-none">
       {/* Top Bar */}
-      <div className="max-w-6xl mx-auto px-4 py-2.5 sm:py-3 flex items-center justify-between gap-2">
+      <div className="max-w-6xl mx-auto px-4 py-2.5 sm:py-3 flex flex-wrap sm:flex-nowrap items-center justify-between gap-2">
         {/* Logo and Brand */}
         <div className="flex items-center gap-2.5">
           <div className="bg-amber-500 text-slate-950 font-black p-2 rounded-xl flex items-center justify-center shadow-md shadow-amber-500/10">
@@ -267,20 +267,24 @@ export const Navbar: React.FC<NavbarProps> = ({
       <nav className="border-t border-slate-900 bg-slate-950/80">
         <div className="max-w-6xl mx-auto px-2 flex items-center justify-between">
           {/* MOBILE NAVIGATION: 3 PROMINENT ACTIONS (ENTER HOURS, PUMP OPS, MECHANICS) + MORE */}
-          <div className="flex sm:hidden items-center gap-1 py-1.5 w-full">
+          <div className="flex sm:hidden items-center gap-1 p-1.5 w-full fixed bottom-0 inset-x-0 bg-slate-950 border-t border-slate-800 mobile-bottom-nav">
+            <button onClick={() => { setShowMoreMenu(false); onTabChange('home'); }}
+              className={`flex-1 min-h-[48px] rounded-xl text-[10px] font-black flex flex-col items-center justify-center gap-1 ${activeTab === 'home' ? 'bg-amber-500 text-slate-950' : 'text-slate-300'}`}>
+              <Home className="w-4 h-4" /><span>HOME</span>
+            </button>
             <button
               onClick={() => {
                 setShowMoreMenu(false);
                 onTabChange('entry');
               }}
-              className={`flex-1 min-h-[44px] px-1 py-2 rounded-xl font-black text-[10px] sm:text-[11px] uppercase tracking-wider flex items-center justify-center gap-1 transition-all cursor-pointer ${
+              className={`flex-1 min-h-[44px] px-1 py-2 rounded-xl font-black text-[10px] sm:text-[11px] uppercase tracking-wider flex flex-col sm:flex-row items-center justify-center gap-1 transition-all cursor-pointer ${
                 activeTab === 'entry'
                   ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
                   : 'text-slate-300 hover:text-white bg-slate-900/60'
               }`}
             >
               <Edit3 className="w-3.5 h-3.5 shrink-0" />
-              <span>ENTER HOURS</span>
+              <span>HOURS</span>
             </button>
 
             <button
@@ -288,7 +292,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 setShowMoreMenu(false);
                 onTabChange('ops');
               }}
-              className={`flex-1 min-h-[44px] px-1 py-2 rounded-xl font-black text-[10px] sm:text-[11px] uppercase tracking-wider flex items-center justify-center gap-1 transition-all cursor-pointer ${
+              className={`flex-1 min-h-[44px] px-1 py-2 rounded-xl font-black text-[10px] sm:text-[11px] uppercase tracking-wider flex flex-col sm:flex-row items-center justify-center gap-1 transition-all cursor-pointer ${
                 activeTab === 'ops'
                   ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
                   : 'text-slate-300 hover:text-white bg-slate-900/60'
@@ -303,7 +307,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 setShowMoreMenu(false);
                 onTabChange('mechanics');
               }}
-              className={`flex-1 min-h-[44px] px-1 py-2 rounded-xl font-black text-[10px] sm:text-[11px] uppercase tracking-wider flex items-center justify-center gap-1 transition-all cursor-pointer ${
+              className={`flex-1 min-h-[44px] px-1 py-2 rounded-xl font-black text-[10px] sm:text-[11px] uppercase tracking-wider flex flex-col sm:flex-row items-center justify-center gap-1 transition-all cursor-pointer ${
                 activeTab === 'mechanics'
                   ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
                   : 'text-slate-300 hover:text-white bg-slate-900/60'
@@ -315,8 +319,8 @@ export const Navbar: React.FC<NavbarProps> = ({
 
             <button
               onClick={() => setShowMoreMenu(!showMoreMenu)}
-              className={`min-h-[44px] px-2.5 py-2 rounded-xl font-black text-[10px] sm:text-[11px] uppercase tracking-wider flex items-center justify-center gap-1 transition-all cursor-pointer ${
-                ['home', 'lineup', 'inventory', 'history', 'print'].includes(activeTab) || showMoreMenu
+              className={`flex-1 min-h-[48px] px-1 py-2 rounded-xl font-black text-[10px] sm:text-[11px] uppercase tracking-wider flex flex-col sm:flex-row items-center justify-center gap-1 transition-all cursor-pointer ${
+                ['lineup', 'inventory', 'history', 'print'].includes(activeTab) || showMoreMenu
                   ? 'bg-slate-800 text-amber-400 border border-amber-500/40 shadow-sm'
                   : 'text-slate-400 hover:text-white bg-slate-900/60'
               }`}
@@ -430,7 +434,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       {/* MOBILE MORE MENU SHEET */}
       {showMoreMenu && (
         <div className="sm:hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex flex-col justify-end">
-          <div className="bg-slate-900 border-t border-slate-700 rounded-t-3xl p-5 space-y-4 shadow-2xl animate-in slide-in-from-bottom duration-200">
+          <div className="bg-slate-900 border-t border-slate-700 rounded-t-3xl p-5 space-y-4 shadow-2xl mobile-more-sheet animate-in slide-in-from-bottom duration-200">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div>
                 <span className="text-xs uppercase font-mono font-bold text-amber-400 block">
@@ -451,32 +455,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
 
             <div className="grid grid-cols-1 gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowMoreMenu(false);
-                  onTabChange('home');
-                }}
-                className={`w-full min-h-[54px] p-3.5 rounded-2xl flex items-center justify-between text-left transition-all cursor-pointer ${
-                  activeTab === 'home'
-                    ? 'bg-amber-500 text-slate-950 font-black'
-                    : 'bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-xl ${activeTab === 'home' ? 'bg-slate-950/20 text-slate-950' : 'bg-amber-500/10 text-amber-400'}`}>
-                    <Home className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="text-sm font-black">Today's Hours</div>
-                    <div className={`text-xs ${activeTab === 'home' ? 'text-slate-900/80' : 'text-slate-400'}`}>
-                      Shift overview &amp; summary dashboard
-                    </div>
-                  </div>
-                </div>
-                <ChevronRight className="w-4 h-4 opacity-60" />
-              </button>
-
               <button
                 type="button"
                 onClick={() => {

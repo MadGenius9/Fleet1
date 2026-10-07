@@ -3,7 +3,7 @@
  */
 
 import type { PumpOpsEvent, PumpOpStatus, ShiftType, SpotCheckHoleResult } from '../../types';
-import { extractStationNumber } from '../../context/FleetContext';
+import { extractStationNumber } from '../../lib/fleetMutations';
 
 export type IssueDisplayStatus = 'SPOT CHECK' | 'DOWN' | 'REPAIRING' | 'DERATED' | 'WATCH' | 'RUNNING';
 
@@ -15,11 +15,13 @@ export function getIssueDisplayStatus(event?: {
   eventType?: string;
   status?: string;
   resolvedAt?: number | null;
+  watchNextShift?: boolean;
 } | null): IssueDisplayStatus {
   if (!event) return 'RUNNING';
   if (event.eventType === 'spot_check' && !event.resolvedAt) {
     return 'SPOT CHECK';
   }
+  if (!event.resolvedAt && event.watchNextShift && !['DOWN', 'REPAIRING', 'DERATED'].includes(event.status || '')) return 'WATCH';
   return (event.status as IssueDisplayStatus) || 'RUNNING';
 }
 
@@ -39,7 +41,6 @@ export interface DownEquipmentItem {
   component?: string;
   holes?: number[];
   limitation?: string;
-  stage?: number | string | null;
   date?: string;
   shift?: ShiftType;
   rawNotes: string;
@@ -288,7 +289,6 @@ export function extractActiveEquipmentIssues(
       component: ev.component,
       holes: ev.holes,
       limitation: ev.limitation,
-      stage: ev.stage,
       date: ev.date,
       shift: ev.shift,
       rawNotes: notesRaw,
@@ -325,7 +325,6 @@ export function extractActiveEquipmentIssues(
       component: ev.component,
       holes: ev.holes,
       limitation: ev.limitation,
-      stage: ev.stage,
       date: ev.date,
       shift: ev.shift,
       rawNotes: notesRaw,

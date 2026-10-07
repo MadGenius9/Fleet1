@@ -16,7 +16,7 @@ import { PrintView } from './components/PrintView';
 import { PumpOpsView } from './components/PumpOpsView';
 import { MechanicsView } from './components/MechanicsView';
 import { AssignmentConflictModal } from './components/AssignmentConflictModal';
-import { Edit3 } from 'lucide-react';
+import { firebaseConfigured } from './lib/firebaseConfig';
 import type { ShiftType } from './types';
 
 function FleetApp() {
@@ -72,7 +72,7 @@ function FleetApp() {
       <AssignmentConflictModal onReviewLineup={() => setActiveTab('lineup')} />
 
       {/* Main View Container */}
-      <main className="flex-1 max-w-6xl w-full mx-auto p-3 sm:p-5">
+      <main className="flex-1 max-w-6xl w-full mx-auto p-3 sm:p-5 mobile-content">
         {activeTab === 'home' && (
           <HomeView
             onEnterHours={(shift, section, pump) => handleOpenEntry(undefined, shift, section, pump)}
@@ -141,23 +141,18 @@ function FleetApp() {
         )}
       </main>
 
-      {/* Mobile Floating Action Button on Home Screen */}
-      {activeTab === 'home' && (
-        <div className="sm:hidden fixed bottom-5 right-5 z-30 print:hidden">
-          <button
-            onClick={() => handleOpenEntry()}
-            aria-label="Enter Pump Hours"
-            className="w-14 h-14 rounded-2xl bg-amber-500 text-slate-950 flex items-center justify-center shadow-xl shadow-amber-500/30 active:scale-95 transition-transform cursor-pointer"
-          >
-            <Edit3 className="w-6 h-6 stroke-[2.5]" />
-          </button>
-        </div>
-      )}
+
     </div>
   );
 }
 
 export default function App() {
+  if (!firebaseConfigured) {
+    return <main className="p-6 text-slate-100 max-w-xl mx-auto">
+      <h1 className="text-xl font-bold">Fleet 1 — Firebase setup required</h1>
+      <p className="mt-3">Configure the Firebase client settings listed in .env.example, then restart the development server.</p>
+    </main>;
+  }
   return (
     <FleetProvider>
       <FleetApp />

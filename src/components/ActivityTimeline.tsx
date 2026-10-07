@@ -120,6 +120,8 @@ export const ActivityTimeline: React.FC<ActivityTimelineProps> = ({
   // Remember manual date expand/collapse toggles during the session
   const [userToggledDates, setUserToggledDates] = useState<Record<string, boolean>>({});
 
+  useEffect(() => { setUserToggledDates({}); }, [localToday]);
+
   // Optional search / filter state
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [typeFilter, setTypeFilter] = useState<'all' | 'down' | 'repair' | 'swaps' | 'watch' | 'spot_check'>('all');
@@ -672,7 +674,7 @@ export const ActivityTimeline: React.FC<ActivityTimelineProps> = ({
                                               : 'bg-rose-950/40 border-rose-500/30 text-rose-300 font-black'
                                           }`}
                                         >
-                                          H{c.hole} {c.condition}{c.part ? ` — ${c.part}` : ''}{c.recheckNextStage ? ' (RECHECK)' : ''}
+                                          H{c.hole} {c.condition}{c.part ? ` — ${c.part}` : ''}
                                         </span>
                                       ))}
                                     </div>

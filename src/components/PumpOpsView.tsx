@@ -4,7 +4,7 @@ import type { ShiftType, PumpOpsEvent, PumpOpStatus, SpotCheckHoleResult } from 
 import { ActiveSpreadIssuesPrintModal } from './ActiveSpreadIssuesPrintModal';
 import { ActivityTimeline } from './ActivityTimeline';
 import { EditPumpIssueModal } from './EditPumpIssueModal';
-import { SpotCheckModal, type LinkedIssueStatus } from './SpotCheckModal';
+import { SpotCheckModal } from './SpotCheckModal';
 import { SpotCheckDetailModal } from './SpotCheckDetailModal';
 import { formatCompactIssue } from './reports/reportUtils';
 import {
@@ -224,6 +224,8 @@ export const PumpOpsView: React.FC<PumpOpsViewProps> = ({
 
   // 7. MODAL: EDIT ISSUE IN PLACE
   const [editIssueModalEvent, setEditIssueModalEvent] = useState<PumpOpsEvent | null>(null);
+
+  const [conversionBaseline, setConversionBaseline] = useState<PumpOpsEvent | null>(null);
 
   // 8. MODAL: SPOT CHECK (VALVES & SEATS)
   const [spotCheckModal, setSpotCheckModal] = useState<{
@@ -531,7 +533,6 @@ export const PumpOpsView: React.FC<PumpOpsViewProps> = ({
       pump: string;
       checks: SpotCheckHoleResult[];
       notes?: string;
-      recheckNextStage?: boolean;
     },
     existingId?: string
   ): Promise<PumpOpsEvent> => {
@@ -540,11 +541,10 @@ export const PumpOpsView: React.FC<PumpOpsViewProps> = ({
       const updates: Partial<PumpOpsEvent> = {
         checks: data.checks,
         notes: data.notes,
-        recheckNextStage: data.recheckNextStage,
         lastEditedAt: now,
         lastEditedBy: technicianName || 'Operator',
       };
-      await updatePumpOpEvent(existingId, updates);
+      await updatePumpOpEvent(existingId, updates, spotCheckModal?.existingEvent || undefined);
       const existing = pumpOpsEvents.find((e) => e.id === existingId);
       return {
         ...(existing || {}),
@@ -564,7 +564,6 @@ export const PumpOpsView: React.FC<PumpOpsViewProps> = ({
       component: 'VALVES & SEATS',
       checks: data.checks,
       notes: data.notes,
-      recheckNextStage: data.recheckNextStage,
       operator: technicianName || 'Operator',
       startedAt: now,
       downAt: now,
@@ -586,78 +585,8 @@ export const PumpOpsView: React.FC<PumpOpsViewProps> = ({
       downAt: spotCheckEvent.downAt || spotCheckEvent.startedAt,
       startedAt: spotCheckEvent.startedAt,
     };
+    setConversionBaseline(spotCheckEvent);
     setEditIssueModalEvent(convertedMock);
-  };
-
-  // Create linked issue from Spot Check (WATCH / DOWN / DERATED)
-  const handleCreateLinkedIssueFromSpotCheck = async (params: {
-    status: LinkedIssueStatus;
-    holes: number[];
-    notes?: string;
-    sourceSpotCheckId: string;
-    limitation?: string;
-  }) => {
-    const now = Date.now();
-    if (!spotCheckModal) return;
-
-    if (params.status === 'DOWN') {
-      await recordPumpOpEvent({
-        date,
-        shift,
-        station: spotCheckModal.station,
-        pump: spotCheckModal.pump,
-        eventType: 'pump_down',
-        status: 'DOWN',
-        category: 'FLUID END',
-        component: 'VALVES & SEATS',
-        holes: params.holes,
-        notes: params.notes,
-        operator: technicianName || 'Operator',
-        startedAt: now,
-        downAt: now,
-        sourceSpotCheckId: params.sourceSpotCheckId,
-        createdFromSpotCheck: true,
-      });
-    } else if (params.status === 'DERATED') {
-      await recordPumpOpEvent({
-        date,
-        shift,
-        station: spotCheckModal.station,
-        pump: spotCheckModal.pump,
-        eventType: 'derated',
-        status: 'DERATED',
-        category: 'FLUID END',
-        component: 'VALVES & SEATS',
-        holes: params.holes,
-        limitation: params.limitation,
-        notes: params.notes,
-        operator: technicianName || 'Operator',
-        startedAt: now,
-        downAt: null,
-        sourceSpotCheckId: params.sourceSpotCheckId,
-        createdFromSpotCheck: true,
-      });
-    } else {
-      // WATCH
-      await recordPumpOpEvent({
-        date,
-        shift,
-        station: spotCheckModal.station,
-        pump: spotCheckModal.pump,
-        eventType: 'watch_item',
-        status: 'RUNNING',
-        category: 'FLUID END',
-        component: 'VALVES & SEATS',
-        holes: params.holes,
-        notes: params.notes,
-        watchNextShift: true,
-        operator: technicianName || 'Operator',
-        startedAt: now,
-        downAt: null,
-        sourceSpotCheckId: params.sourceSpotCheckId,
-        createdFromSpotCheck: true,
-      });
-    }
   };
 
   // Save Shift Notes with debounce / blur
@@ -1197,6 +1126,12 @@ export const PumpOpsView: React.FC<PumpOpsViewProps> = ({
                         >
                           RETURN TO SERVICE
                         </button>
+                        {isSpotCheck && (issue.checks || []).some((check) => check.condition === 'BAD') && (
+                          <button type="button" onClick={() => handleConvertSpotCheckToFailure(issue)}
+                            className="min-h-[44px] px-3 py-1.5 bg-slate-800 text-rose-300 rounded-lg text-xs font-bold border border-slate-700">
+                            CONVERT TO FAILURE
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => setHistoryModalPump(issue.pump)}
@@ -3039,9 +2974,9 @@ export const PumpOpsView: React.FC<PumpOpsViewProps> = ({
       {editIssueModalEvent && (
         <EditPumpIssueModal
           event={editIssueModalEvent}
-          onClose={() => setEditIssueModalEvent(null)}
+          onClose={() => { setEditIssueModalEvent(null); setConversionBaseline(null); }}
           onSave={async (eventId, updates) => {
-            await updatePumpOpEvent(eventId, updates);
+            await updatePumpOpEvent(eventId, updates, conversionBaseline?.id === eventId ? conversionBaseline : editIssueModalEvent);
           }}
           technicianName={technicianName}
         />
@@ -3055,7 +2990,6 @@ export const PumpOpsView: React.FC<PumpOpsViewProps> = ({
           existingEvent={spotCheckModal.existingEvent}
           onClose={() => setSpotCheckModal(null)}
           onSaveSpotCheck={handleSaveSpotCheck}
-          onCreateLinkedIssue={handleCreateLinkedIssueFromSpotCheck}
           technicianName={technicianName}
         />
       )}

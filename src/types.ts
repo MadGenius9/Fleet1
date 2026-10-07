@@ -152,11 +152,14 @@ export interface MaintenanceLog {
 
 export interface QueuedWrite {
   id: string;
-  type: 'set' | 'update' | 'delete' | 'fleet-update';
+  type: 'set' | 'update' | 'delete' | 'fleet-update' | 'event-update';
   path: string;
   data?: any;
   timestamp: number;
   retryCount: number;
+  expected?: Record<string, any>;
+  isConflict?: boolean;
+  conflictDetails?: SyncErrorInfo['conflictDetails'];
   lastError?: string;
   lastAttempt?: number;
   status?: 'pending' | 'retrying' | 'failed';

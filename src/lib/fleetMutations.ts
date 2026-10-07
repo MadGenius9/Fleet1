@@ -126,8 +126,12 @@ export function applyFleetMutation(base: FleetDoc, mutation: FleetMutation): Fle
         ? currentStationPumps[cleanStation]
         : [];
 
-      // Validate expected original pump if specified
+      // An explicitly empty expected assignment means the station must still be empty.
       const expectedOld = (mutation.expectedOldPump || '').trim();
+      if (currentStationList.length === 1 && currentStationList[0] === cleanPump) return base;
+      if (mutation.expectedOldPump === '' && currentStationList.length > 0) {
+        throw new AssignmentConflictError(cleanStation, currentStationList[0], cleanPump, 'Unassigned');
+      }
       if (expectedOld) {
         const hasExpectedOld = currentStationList.some(
           (p) => p.trim().toLowerCase() === expectedOld.toLowerCase()
@@ -187,6 +191,9 @@ export function applyFleetMutation(base: FleetDoc, mutation: FleetMutation): Fle
       const currentStationList = Array.isArray(currentStationPumps[cleanStation])
         ? currentStationPumps[cleanStation]
         : [];
+
+      // A retry of an already-committed swap is a no-op, never a false conflict.
+      if (currentStationList.length === 1 && currentStationList[0] === cleanNew) return base;
 
       // 1. VALIDATE: The station assignment against the expected original pump
       const expectedOld = (mutation.expectedOldPump || cleanOld).trim();

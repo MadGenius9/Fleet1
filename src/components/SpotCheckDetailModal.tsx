@@ -86,11 +86,7 @@ export const SpotCheckDetailModal: React.FC<SpotCheckDetailModalProps> = ({
                           {c.part}
                         </span>
                       )}
-                      {c.recheckNextStage && (
-                        <span className="text-[10px] text-indigo-300 bg-indigo-950/80 px-1 rounded border border-indigo-500/30">
-                          RECHECK
-                        </span>
-                      )}
+
                     </div>
 
                     <div className="flex items-center gap-1.5 font-bold">

@@ -15,7 +15,7 @@ import {
   getOperationalShift,
   getOperationalDate,
   getShiftChronologicalKey,
-} from './context/FleetContext';
+} from './lib/shifts';
 import { extractActiveEquipmentIssues, formatCompactDowntime, getIssueDisplayStatus } from './components/reports/reportUtils';
 import { applyFleetMutation, AssignmentConflictError } from './lib/fleetMutations';
 import type { MaintenanceLog, PumpOpsEvent, QueuedWrite, FleetDoc, FleetMutation } from './types';

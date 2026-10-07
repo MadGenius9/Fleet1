@@ -57,20 +57,21 @@ export const HomeView: React.FC<HomeViewProps> = ({
   // Active status counts for mobile home view
   const opsSummary = useMemo(() => {
     let downCount = 0;
+    let spotCheckCount = 0;
     let deratedCount = 0;
     let repairingCount = 0;
     fleet.pumps.forEach((pump) => {
       const st = getPumpCurrentStatus(pump);
-      if (st.status === 'DOWN') downCount++;
+      if (st.activeEvent?.eventType === 'spot_check') spotCheckCount++;
+      else if (st.status === 'DOWN') downCount++;
       else if (st.status === 'DERATED') deratedCount++;
       else if (st.status === 'REPAIRING') repairingCount++;
     });
-    return { downCount, deratedCount, repairingCount };
+    return { downCount, spotCheckCount, deratedCount, repairingCount };
   }, [fleet.pumps, getPumpCurrentStatus]);
 
   // Selected shift for preview table
   const [previewShift, setPreviewShift] = useState<ShiftType>(activeShift || 'day');
-  const [showMobileMore, setShowMobileMore] = useState(false);
 
   // Active assigned stations in order
   const activeStations = useMemo(() => {
@@ -223,7 +224,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   return (
     <div className="space-y-5 pb-24 max-w-4xl mx-auto">
       {/* MOBILE SIMPLIFIED NAVIGATION & SUMMARY (Requirement 5) */}
-      <div className="md:hidden bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl space-y-3.5">
+      <div className="sm:hidden bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl space-y-3.5">
         <div className="flex items-center justify-between">
           <div>
             <span className="text-[11px] uppercase font-black tracking-widest text-amber-400 block">
@@ -271,10 +272,11 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 <Activity className="w-5 h-5 text-amber-400" />
                 <span>PUMP OPS</span>
               </div>
-              <div className="flex items-center gap-2 text-xs font-mono font-bold">
+              <div className="flex flex-wrap justify-end gap-2 text-xs font-mono font-bold">
                 <span className={opsSummary.downCount > 0 ? 'text-rose-400' : 'text-slate-400'}>
                   {opsSummary.downCount} DOWN
                 </span>
+                <span className="text-cyan-400">{opsSummary.spotCheckCount} SPOT CHECK</span>
                 <span className="text-slate-600">•</span>
                 <span className={opsSummary.deratedCount > 0 ? 'text-purple-400' : 'text-slate-400'}>
                   {opsSummary.deratedCount} DERATED
@@ -299,63 +301,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
           )}
         </div>
 
-        {/* MORE OPTIONS: Inventory, Lineup, History, Reports */}
-        <div className="pt-2 border-t border-slate-800">
-          <button
-            type="button"
-            onClick={() => setShowMobileMore(!showMobileMore)}
-            className="w-full py-2 px-3 text-xs font-bold text-slate-400 hover:text-amber-400 flex items-center justify-between rounded-xl bg-slate-950/70 border border-slate-800/80 cursor-pointer transition-colors"
-          >
-            <div className="flex items-center gap-2">
-              <MoreHorizontal className="w-4 h-4 text-amber-400" />
-              <span className="uppercase tracking-wider">MORE OPTIONS</span>
-            </div>
-            {showMobileMore ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-          </button>
-
-          {showMobileMore && (
-            <div className="grid grid-cols-2 gap-2 mt-2 pt-1 animate-in fade-in duration-200">
-              {onGoToInventory && (
-                <button
-                  type="button"
-                  onClick={onGoToInventory}
-                  className="p-2.5 bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-xl flex items-center gap-2 text-xs font-bold text-slate-300 text-left transition-colors cursor-pointer"
-                >
-                  <Boxes className="w-4 h-4 text-amber-400 shrink-0" />
-                  <span>Inventory</span>
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={onGoToLineup}
-                className="p-2.5 bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-xl flex items-center gap-2 text-xs font-bold text-slate-300 text-left transition-colors cursor-pointer"
-              >
-                <Sliders className="w-4 h-4 text-amber-400 shrink-0" />
-                <span>Lineup</span>
-              </button>
-              <button
-                type="button"
-                onClick={onGoToHistory}
-                className="p-2.5 bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-xl flex items-center gap-2 text-xs font-bold text-slate-300 text-left transition-colors cursor-pointer"
-              >
-                <Calendar className="w-4 h-4 text-amber-400 shrink-0" />
-                <span>History</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => onGoToPrint(activeShift)}
-                className="p-2.5 bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-xl flex items-center gap-2 text-xs font-bold text-slate-300 text-left transition-colors cursor-pointer"
-              >
-                <Printer className="w-4 h-4 text-amber-400 shrink-0" />
-                <span>Reports</span>
-              </button>
-            </div>
-          )}
-        </div>
       </div>
 
       {/* Top Header */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl hidden sm:flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
             <span className="text-xs uppercase font-black tracking-widest text-amber-400">
@@ -421,8 +370,14 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </div>
       </div>
 
+      <button type="button" onClick={() => onEnterHours(activeShift === 'day' ? 'night' : 'day', 'lineup')}
+        className="sm:hidden w-full min-h-[48px] flex items-center justify-between gap-2 px-4 py-3 bg-slate-900 border border-slate-800 rounded-xl text-sm">
+        <span className="font-bold">{activeShift === 'day' ? 'Night' : 'Day'} Shift</span>
+        <span className="text-slate-400 font-mono">{(activeShift === 'day' ? nightStatus : dayStatus).enteredCount} / {totalStations} complete →</span>
+      </button>
+
       {/* TWO SEPARATE SHIFT CARDS: DAY SHIFT and NIGHT SHIFT */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="hidden sm:grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* ================= DAY SHIFT CARD ================= */}
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4 relative overflow-hidden flex flex-col justify-between">
           <div

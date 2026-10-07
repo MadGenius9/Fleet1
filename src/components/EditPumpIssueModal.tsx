@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import { getIssueStatusPatch, getClearWatchPatch } from '../lib/eventMutations';
+import React, { useState } from 'react';
 import type { PumpOpsEvent, PumpOpStatus } from '../types';
 import {
   X,
@@ -85,9 +86,6 @@ export const EditPumpIssueModal: React.FC<EditPumpIssueModalProps> = ({
   onSave,
   technicianName,
 }) => {
-  // Capture initial updatedAt for multi-device optimistic concurrency warning
-  const initialUpdatedAt = event.updatedAt || event.createdAt || event.startedAt;
-
   // Detect whether this is a watch-only item (never marked DOWN, REPAIRING, or DERATED)
   const isInitiallyWatchOnly =
     event.eventType === 'watch_item' ||
@@ -113,28 +111,6 @@ export const EditPumpIssueModal: React.FC<EditPumpIssueModalProps> = ({
   const [limitation, setLimitation] = useState<string>(event.limitation || '');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [conflictWarning, setConflictWarning] = useState<string | null>(null);
-
-  // If the event is modified in the background while this modal is open
-  useEffect(() => {
-    if (event.updatedAt && event.updatedAt > initialUpdatedAt) {
-      setConflictWarning('ISSUE UPDATED ON ANOTHER DEVICE');
-    }
-  }, [event.updatedAt, initialUpdatedAt]);
-
-  const handleReloadLatest = () => {
-    setSelectedStatus(
-      ['DOWN', 'REPAIRING', 'DERATED'].includes(event.status)
-        ? event.status
-        : 'WATCH'
-    );
-    setCategory(event.category || 'FLUID END');
-    setComponent(event.component || 'PACKING');
-    setHoles(Array.isArray(event.holes) ? [...event.holes] : []);
-    setNotes(event.notes || '');
-    setWatchNextShift(Boolean(event.watchNextShift));
-    setLimitation(event.limitation || '');
-    setConflictWarning(null);
-  };
 
   const toggleHole = (holeNum: number) => {
     setHoles((prev) => {
@@ -166,20 +142,15 @@ export const EditPumpIssueModal: React.FC<EditPumpIssueModalProps> = ({
     try {
       const now = Date.now();
       const updates: Partial<PumpOpsEvent> = {
-        resolvedAt: now,
-        watchNextShift: false,
+        ...getClearWatchPatch(event, now),
         lastEditedAt: now,
         lastEditedBy: technicianName || 'Operator',
-        notes: notes.trim()
-          ? event.notes
-            ? `${event.notes} • ${notes.trim()}`
-            : notes.trim()
-          : event.notes,
+        notes: notes.trim(),
       };
       await onSave(event.id, updates);
       onClose();
     } catch (err) {
-      console.error('Failed to clear watch item:', err);
+      setConflictWarning(err instanceof Error ? err.message : 'Could not clear Watch. Close and review the issue before retrying.');
     } finally {
       setIsSubmitting(false);
     }
@@ -193,46 +164,9 @@ export const EditPumpIssueModal: React.FC<EditPumpIssueModalProps> = ({
       const now = Date.now();
       const cleanNotes = notes.trim() ? notes.trim() : '';
 
-      // Determine operational status and downAt
-      let targetStatus: PumpOpStatus = event.status;
-      let targetEventType = event.eventType;
-      let targetDownAt: number | null | undefined = event.downAt;
-      let targetRepairStartedAt = event.repairStartedAt;
+      const statusPatch = getIssueStatusPatch(event, selectedStatus as 'DOWN' | 'REPAIRING' | 'DERATED' | 'WATCH', now);
+      const targetStatus = statusPatch.status;
       let targetResolvedAt = event.resolvedAt;
-
-      if (selectedStatus === 'DOWN') {
-        targetStatus = 'DOWN';
-        targetEventType = 'pump_down';
-        if (event.status === 'DOWN' || event.status === 'REPAIRING') {
-          // Already down: retain original downtime start clock
-          targetDownAt = event.downAt || event.startedAt;
-        } else {
-          // DERATED or WATCH -> DOWN: downtime starts NOW!
-          targetDownAt = now;
-        }
-      } else if (selectedStatus === 'REPAIRING') {
-        targetStatus = 'REPAIRING';
-        targetEventType = 'repair_started';
-        if (event.status === 'DOWN' || event.status === 'REPAIRING') {
-          targetDownAt = event.downAt || event.startedAt;
-        } else {
-          targetDownAt = now;
-        }
-        if (!targetRepairStartedAt) {
-          targetRepairStartedAt = now;
-        }
-      } else if (selectedStatus === 'DERATED') {
-        targetStatus = 'DERATED';
-        targetEventType = 'derated';
-        // If it was never actually down, downAt is null
-        if (event.status !== 'DOWN' && event.status !== 'REPAIRING') {
-          targetDownAt = null;
-        }
-      } else if (selectedStatus === 'WATCH') {
-        targetStatus = 'RUNNING';
-        targetEventType = 'watch_item';
-        targetDownAt = null;
-      }
 
       // If issue was watch-only and operator turned off watchNextShift (and did not take pump DOWN/REPAIRING/DERATED)
       if (isInitiallyWatchOnly && !watchNextShift && (selectedStatus === 'WATCH' || targetStatus === 'RUNNING')) {
@@ -245,25 +179,22 @@ export const EditPumpIssueModal: React.FC<EditPumpIssueModalProps> = ({
         holes: category === 'FLUID END' && holes.length > 0 ? holes : [],
         notes: cleanNotes,
         watchNextShift,
-        status: targetStatus,
-        eventType: targetEventType,
-        downAt: targetDownAt,
-        repairStartedAt: targetRepairStartedAt,
+        ...statusPatch,
         resolvedAt: targetResolvedAt,
         lastEditedAt: now,
         lastEditedBy: technicianName || 'Operator',
       };
 
       if (targetStatus === 'DERATED') {
-        updates.limitation = limitation.trim() ? limitation.trim() : undefined;
+        updates.limitation = limitation.trim() || '';
       } else {
-        updates.limitation = undefined;
+        updates.limitation = '';
       }
 
       await onSave(event.id, updates);
       onClose();
     } catch (err) {
-      console.error('Failed to update pump issue:', err);
+      setConflictWarning(err instanceof Error ? err.message : 'Could not save this edit. Close and review the issue before retrying.');
     } finally {
       setIsSubmitting(false);
     }
@@ -330,10 +261,10 @@ export const EditPumpIssueModal: React.FC<EditPumpIssueModalProps> = ({
             </div>
             <button
               type="button"
-              onClick={handleReloadLatest}
+              onClick={onClose}
               className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[11px] rounded-lg uppercase cursor-pointer"
             >
-              RELOAD LATEST
+              CLOSE &amp; REVIEW
             </button>
           </div>
         )}

@@ -18,7 +18,6 @@ import {
   Sparkles,
 } from 'lucide-react';
 
-export type LinkedIssueStatus = 'DOWN' | 'DERATED' | 'WATCH';
 
 interface SpotCheckModalProps {
   station: string;
@@ -29,20 +28,11 @@ interface SpotCheckModalProps {
     data: {
       station: string;
       pump: string;
-      stage?: number | string | null;
       checks: SpotCheckHoleResult[];
       notes?: string;
-      recheckNextStage?: boolean;
     },
     existingId?: string
   ) => Promise<PumpOpsEvent>;
-  onCreateLinkedIssue?: (params: {
-    status: LinkedIssueStatus;
-    holes: number[];
-    notes?: string;
-    sourceSpotCheckId: string;
-    limitation?: string;
-  }) => Promise<void>;
   technicianName?: string;
 }
 
@@ -50,7 +40,6 @@ const COMMON_NOTE_CHIPS = [
   'Valves & seats look good',
   'Seat starting to wash',
   'Valve pitted slightly',
-  'Recheck next stage',
   'Checked after pressure spike',
   'Replaced valve & seat',
 ];
@@ -61,7 +50,6 @@ export const SpotCheckModal: React.FC<SpotCheckModalProps> = ({
   existingEvent,
   onClose,
   onSaveSpotCheck,
-  onCreateLinkedIssue,
   technicianName,
 }) => {
   const isEditing = Boolean(existingEvent);
@@ -82,7 +70,6 @@ export const SpotCheckModal: React.FC<SpotCheckModalProps> = ({
           map[c.hole] = {
             condition: c.condition,
             part: c.part,
-            recheck: c.recheckNextStage,
           };
         }
       });
@@ -95,12 +82,6 @@ export const SpotCheckModal: React.FC<SpotCheckModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Post-save action prompt modal state
-  const [savedEvent, setSavedEvent] = useState<PumpOpsEvent | null>(null);
-  const [pendingPromptType, setPendingPromptType] = useState<'watch' | 'bad' | null>(null);
-  const [derateLimitation, setDerateLimitation] = useState('');
-  const [selectedBadStatus, setSelectedBadStatus] = useState<LinkedIssueStatus>('DOWN');
-
   const setHoleCondition = (hole: number, condition: SpotCheckCondition) => {
     setHoleChecks((prev) => {
       const current = prev[hole] || {};
@@ -112,7 +93,6 @@ export const SpotCheckModal: React.FC<SpotCheckModalProps> = ({
           condition,
           // default part to BOTH if not yet set
           part: current.part || 'BOTH',
-          recheck: condition === 'WATCH' ? (current.recheck ?? true) : current.recheck,
         },
       };
     });
@@ -126,19 +106,6 @@ export const SpotCheckModal: React.FC<SpotCheckModalProps> = ({
         [hole]: {
           ...current,
           part: current.part === part ? undefined : part,
-        },
-      };
-    });
-  };
-
-  const toggleHoleRecheck = (hole: number) => {
-    setHoleChecks((prev) => {
-      const current = prev[hole] || {};
-      return {
-        ...prev,
-        [hole]: {
-          ...current,
-          recheck: !current.recheck,
         },
       };
     });
@@ -168,7 +135,6 @@ export const SpotCheckModal: React.FC<SpotCheckModalProps> = ({
           hole: h,
           condition: item.condition,
           part: item.part,
-          recheckNextStage: item.recheck,
         });
         if (item.condition === 'BAD') hasBad = true;
         if (item.condition === 'WATCH') hasWatch = true;
@@ -191,7 +157,6 @@ export const SpotCheckModal: React.FC<SpotCheckModalProps> = ({
           pump,
           checks,
           notes: cleanNotes,
-          recheckNextStage: checks.some((c) => c.recheckNextStage),
         },
         existingEvent?.id
       );
@@ -207,281 +172,6 @@ export const SpotCheckModal: React.FC<SpotCheckModalProps> = ({
     }
   };
 
-  // Watch prompt action: Create Watch Item
-  const handleConfirmCreateWatch = async () => {
-    if (!savedEvent || !onCreateLinkedIssue) {
-      onClose();
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
-      const watchHoles = (savedEvent.checks || [])
-        .filter((c) => c.condition === 'WATCH')
-        .map((c) => c.hole);
-
-      const partsSummary = (savedEvent.checks || [])
-        .filter((c) => c.condition === 'WATCH')
-        .map((c) => `H${c.hole} ${c.part || 'V&S'}`)
-        .join(', ');
-
-      const combinedNotes = [
-        partsSummary ? `Spot check watch: ${partsSummary}` : 'Spot check watch finding',
-        savedEvent.notes ? savedEvent.notes : '',
-      ]
-        .filter(Boolean)
-        .join(' • ');
-
-      await onCreateLinkedIssue({
-        status: 'WATCH',
-        holes: watchHoles,
-        notes: combinedNotes,
-        sourceSpotCheckId: savedEvent.id,
-      });
-
-      onClose();
-    } catch (err) {
-      console.error('Failed to create linked watch item:', err);
-      onClose();
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // Bad prompt action: Create Active Issue (DOWN / DERATED / WATCH)
-  const handleConfirmCreateActiveIssue = async () => {
-    if (!savedEvent || !onCreateLinkedIssue) {
-      onClose();
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
-      const badHoles = (savedEvent.checks || [])
-        .filter((c) => c.condition === 'BAD')
-        .map((c) => c.hole);
-
-      const partsSummary = (savedEvent.checks || [])
-        .filter((c) => c.condition === 'BAD')
-        .map((c) => `H${c.hole} ${c.part || 'V&S'}`)
-        .join(', ');
-
-      const combinedNotes = [
-        partsSummary ? `Spot check failure: ${partsSummary}` : 'Spot check bad finding',
-        savedEvent.notes ? savedEvent.notes : '',
-      ]
-        .filter(Boolean)
-        .join(' • ');
-
-      await onCreateLinkedIssue({
-        status: selectedBadStatus,
-        holes: badHoles,
-        notes: combinedNotes,
-        sourceSpotCheckId: savedEvent.id,
-        limitation: selectedBadStatus === 'DERATED' ? derateLimitation.trim() || undefined : undefined,
-      });
-
-      onClose();
-    } catch (err) {
-      console.error('Failed to create linked active issue:', err);
-      onClose();
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // =========================================================================
-  // RENDER SUB-MODAL 1: WATCH PROMPT
-  // =========================================================================
-  if (pendingPromptType === 'watch' && savedEvent) {
-    const watchHoles = (savedEvent.checks || [])
-      .filter((c) => c.condition === 'WATCH')
-      .map((c) => `H${c.hole}${c.part ? ` (${c.part})` : ''}`)
-      .join(', ');
-
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-xs animate-in fade-in">
-        <div className="bg-slate-900 border border-indigo-500/50 rounded-2xl p-5 max-w-sm w-full space-y-4 shadow-2xl">
-          <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 shrink-0">
-              <Eye className="w-5 h-5 stroke-[2.5]" />
-            </div>
-            <div>
-              <span className="text-[10px] font-mono font-black uppercase tracking-wider text-indigo-400">
-                SPOT CHECK LOGGED
-              </span>
-              <h3 className="text-base font-black text-slate-100 uppercase tracking-tight">
-                Found a Watch Item
-              </h3>
-            </div>
-          </div>
-
-          <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs font-mono space-y-1">
-            <div className="text-slate-300 font-bold">
-              {station} • Pump {pump}
-            </div>
-            <div className="text-indigo-400">
-              Watch: {watchHoles}
-            </div>
-            {savedEvent.notes && (
-              <div className="text-slate-400 italic text-[11px]">
-                "{savedEvent.notes}"
-              </div>
-            )}
-          </div>
-
-          <p className="text-xs text-slate-300">
-            Create an independent <strong>Watch Next Shift</strong> item for this finding to flag for incoming crew and handoff?
-          </p>
-
-          <div className="flex items-center gap-2 pt-1">
-            <button
-              type="button"
-              disabled={isSubmitting}
-              onClick={onClose}
-              className="flex-1 py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs uppercase rounded-xl cursor-pointer"
-            >
-              LOG CHECK ONLY
-            </button>
-            <button
-              type="button"
-              disabled={isSubmitting}
-              onClick={handleConfirmCreateWatch}
-              className="flex-1 py-2.5 px-3 bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs uppercase tracking-wider rounded-xl cursor-pointer shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-1.5"
-            >
-              <Eye className="w-3.5 h-3.5" />
-              <span>CREATE WATCH</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // =========================================================================
-  // RENDER SUB-MODAL 2: BAD CONDITION PROMPT
-  // =========================================================================
-  if (pendingPromptType === 'bad' && savedEvent) {
-    const badHoles = (savedEvent.checks || [])
-      .filter((c) => c.condition === 'BAD')
-      .map((c) => `H${c.hole}${c.part ? ` (${c.part})` : ''}`)
-      .join(', ');
-
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-xs animate-in fade-in">
-        <div className="bg-slate-900 border border-rose-500/50 rounded-2xl p-5 max-w-sm w-full space-y-4 shadow-2xl">
-          <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 shrink-0">
-              <AlertTriangle className="w-5 h-5 stroke-[2.5]" />
-            </div>
-            <div>
-              <span className="text-[10px] font-mono font-black uppercase tracking-wider text-rose-400">
-                SPOT CHECK LOGGED
-              </span>
-              <h3 className="text-base font-black text-slate-100 uppercase tracking-tight">
-                Found Bad Condition
-              </h3>
-            </div>
-          </div>
-
-          <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs font-mono space-y-1">
-            <div className="text-slate-300 font-bold">
-              {station} • Pump {pump}
-            </div>
-            <div className="text-rose-400 font-bold">
-              Defect: {badHoles}
-            </div>
-            {savedEvent.notes && (
-              <div className="text-slate-400 italic text-[11px]">
-                "{savedEvent.notes}"
-              </div>
-            )}
-          </div>
-
-          <p className="text-xs text-slate-300">
-            What operational action would you like to take?
-          </p>
-
-          <div className="space-y-1.5">
-            <label className="text-[10px] font-mono font-black uppercase text-slate-400 block">
-              SELECT STATUS FOR ACTIVE ISSUE
-            </label>
-            <div className="grid grid-cols-3 gap-1.5">
-              <button
-                type="button"
-                onClick={() => setSelectedBadStatus('DOWN')}
-                className={`py-2 px-2 rounded-xl font-mono font-black text-xs uppercase flex items-center justify-center gap-1 cursor-pointer transition-all ${
-                  selectedBadStatus === 'DOWN'
-                    ? 'bg-rose-500 text-slate-950 ring-2 ring-rose-400'
-                    : 'bg-slate-950 text-rose-300 border border-slate-800'
-                }`}
-              >
-                <AlertOctagon className="w-3.5 h-3.5" />
-                <span>DOWN</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setSelectedBadStatus('DERATED')}
-                className={`py-2 px-2 rounded-xl font-mono font-black text-xs uppercase flex items-center justify-center gap-1 cursor-pointer transition-all ${
-                  selectedBadStatus === 'DERATED'
-                    ? 'bg-orange-500 text-slate-950 ring-2 ring-orange-400'
-                    : 'bg-slate-950 text-orange-300 border border-slate-800'
-                }`}
-              >
-                <Gauge className="w-3.5 h-3.5" />
-                <span>DERATE</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setSelectedBadStatus('WATCH')}
-                className={`py-2 px-2 rounded-xl font-mono font-black text-xs uppercase flex items-center justify-center gap-1 cursor-pointer transition-all ${
-                  selectedBadStatus === 'WATCH'
-                    ? 'bg-indigo-500 text-white ring-2 ring-indigo-400'
-                    : 'bg-slate-950 text-indigo-300 border border-slate-800'
-                }`}
-              >
-                <Eye className="w-3.5 h-3.5" />
-                <span>WATCH</span>
-              </button>
-            </div>
-          </div>
-
-          {selectedBadStatus === 'DERATED' && (
-            <input
-              type="text"
-              value={derateLimitation}
-              onChange={(e) => setDerateLimitation(e.target.value)}
-              placeholder="e.g. Max 8 bpm, 1800 RPM..."
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-amber-400"
-            />
-          )}
-
-          <div className="flex items-center gap-2 pt-1">
-            <button
-              type="button"
-              disabled={isSubmitting}
-              onClick={onClose}
-              className="flex-1 py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs uppercase rounded-xl cursor-pointer"
-            >
-              LOG CHECK ONLY
-            </button>
-            <button
-              type="button"
-              disabled={isSubmitting}
-              onClick={handleConfirmCreateActiveIssue}
-              className="flex-1 py-2.5 px-3 bg-rose-600 hover:bg-rose-500 text-white font-black text-xs uppercase tracking-wider rounded-xl cursor-pointer shadow-lg shadow-rose-600/30 flex items-center justify-center gap-1.5"
-            >
-              <span>CREATE ISSUE</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // =========================================================================
-  // MAIN MODAL: SPOT CHECK FORM (HOLES 1-5)
-  // =========================================================================
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/85 backdrop-blur-xs animate-in fade-in duration-150">
       <div className="bg-slate-900 border border-slate-700 rounded-t-3xl sm:rounded-2xl p-4 sm:p-5 max-w-lg w-full max-h-[94vh] flex flex-col shadow-2xl">
@@ -657,21 +347,7 @@ export const SpotCheckModal: React.FC<SpotCheckModalProps> = ({
                         ))}
                       </div>
 
-                      {/* Optional Recheck Next Stage flag (especially useful for WATCH) */}
-                      {isWatch && (
-                        <button
-                          type="button"
-                          onClick={() => toggleHoleRecheck(holeNum)}
-                          className={`px-2.5 py-0.5 rounded text-[10px] font-mono font-black uppercase transition-all cursor-pointer flex items-center gap-1 ${
-                            check.recheck
-                              ? 'bg-indigo-500/30 text-indigo-300 border border-indigo-500/60'
-                              : 'bg-slate-900 text-slate-400 border border-slate-800'
-                          }`}
-                        >
-                          <span>RECHECK NEXT STAGE</span>
-                          {check.recheck ? '✓' : ''}
-                        </button>
-                      )}
+
                     </div>
                   )}
                 </div>
@@ -700,7 +376,7 @@ export const SpotCheckModal: React.FC<SpotCheckModalProps> = ({
               rows={2}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="e.g. Seat starting to wash, valve looks good, recheck next stage..."
+              placeholder="e.g. Seat starting to wash, valve looks good, notes about findings..."
               className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-amber-400 font-mono"
             />
           </div>

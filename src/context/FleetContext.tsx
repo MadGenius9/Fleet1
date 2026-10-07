@@ -1,3 +1,5 @@
+import { mergeQueuedEvents } from '../lib/mergeQueuedEvents';
+import { findPreviousReading } from '../lib/readings';
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
 import {
   auth,
@@ -45,81 +47,11 @@ import type {
   ShiftHandoffSnapshot,
   AssignmentConflictInfo
 } from '../types';
+import { buildEventPatch, validateEventPatch, WriteConflictError, getResolvedDowntime, getIssueStatusPatch } from '../lib/eventMutations';
 import { applyFleetMutation, AssignmentConflictError } from '../lib/fleetMutations';
 
-/**
- * Frac spread shift detection:
- * Day Shift: 5:30 AM (05:30) to 5:30 PM (17:30)
- * Night Shift: 5:30 PM (17:30) to 5:30 AM (05:30 next day)
- */
-export function getOperationalShift(date: Date = new Date()): ShiftType {
-  const hours = date.getHours();
-  const minutes = date.getMinutes();
-  const totalMinutes = hours * 60 + minutes;
-  // 5:30 AM = 330 minutes, 5:30 PM = 1050 minutes
-  return totalMinutes >= 330 && totalMinutes < 1050 ? 'day' : 'night';
-}
-
-/**
- * Operational date for Frac Spreads:
- * An overnight Night Shift (between 12:00 AM midnight and 5:29:59 AM)
- * belongs to the date the shift started (the prior calendar day).
- */
-export function getOperationalDate(date: Date = new Date()): string {
-  const hours = date.getHours();
-  const minutes = date.getMinutes();
-  const totalMinutes = hours * 60 + minutes;
-
-  const d = new Date(date);
-  if (totalMinutes < 330) {
-    // Before 5:30 AM: This is the night shift that began yesterday at 5:30 PM
-    d.setDate(d.getDate() - 1);
-  }
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-export function getDefaultShift(date: Date = new Date()): ShiftType {
-  return getOperationalShift(date);
-}
-
-export function getShiftChronologicalKey(date: string, shift?: ShiftWithLegacy): string {
-  // Day shift is chronologically 1, Night shift is chronologically 2
-  // Legacy or unknown records are ordered as 0 so they don't precede today's Day shift
-  let order = '0';
-  if (shift === 'night') order = '2';
-  else if (shift === 'day') order = '1';
-  return `${date}_${order}`;
-}
-
-export function getLogDocIdWithShift(
-  date: string,
-  shift: ShiftType,
-  stationNumber: string,
-  pumpNumber: string
-): string {
-  const sanitize = (val: string) => (val || '').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
-  const cleanShift = sanitize(shift || 'day').toLowerCase();
-  return `${date}_${cleanShift}_${sanitize(stationNumber)}_${sanitize(pumpNumber)}`.slice(0, 120);
-}
-
-export function getLogDocId(date: string, shift: ShiftType, stationNumber: string, pumpNumber: string): string;
-export function getLogDocId(date: string, stationNumber: string, pumpNumber: string): string;
-export function getLogDocId(
-  date: string,
-  arg2: string,
-  arg3: string,
-  arg4?: string
-): string {
-  const sanitize = (val: string) => (val || '').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
-  if (arg4 !== undefined) {
-    const cleanShift = sanitize(arg2 || 'day').toLowerCase();
-    return `${date}_${cleanShift}_${sanitize(arg3)}_${sanitize(arg4)}`.slice(0, 120);
-  }
-  return `${date}_${sanitize(arg2)}_${sanitize(arg3)}`.slice(0, 120);
-}
+import { getOperationalShift, getOperationalDate, getDefaultShift, getShiftChronologicalKey, getLogDocIdWithShift, getLogDocId } from '../lib/shifts';
+export { getOperationalShift, getOperationalDate, getDefaultShift, getShiftChronologicalKey, getLogDocIdWithShift, getLogDocId } from '../lib/shifts';
 
 function parseHour(val: any): number | null {
   if (val === null || val === undefined || val === '') return null;
@@ -127,19 +59,8 @@ function parseHour(val: any): number | null {
   return Number.isFinite(num) ? num : null;
 }
 
-export function extractStationNumber(stationName: string): number {
-  const match = (stationName || '').match(/\d+/);
-  return match ? parseInt(match[0], 10) : 9999;
-}
-
-export function sortStations(stations: string[]): string[] {
-  return [...stations].sort((a, b) => {
-    const numA = extractStationNumber(a);
-    const numB = extractStationNumber(b);
-    if (numA !== numB) return numA - numB;
-    return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
-  });
-}
+import { extractStationNumber, sortStations } from '../lib/fleetMutations';
+export { extractStationNumber, sortStations } from '../lib/fleetMutations';
 
 export function sortPumpList(pumps: string[]): string[] {
   return [...pumps].sort((a, b) => {
@@ -221,7 +142,7 @@ interface FleetContextValue {
   currentStage: number | string;
   setCurrentStage: (stage: number | string) => Promise<void>;
   recordPumpOpEvent: (eventData: Omit<PumpOpsEvent, 'id' | 'createdAt' | 'updatedAt' | '_pendingSync'>) => Promise<PumpOpsEvent>;
-  updatePumpOpEvent: (id: string, updates: Partial<PumpOpsEvent>) => Promise<void>;
+  updatePumpOpEvent: (id: string, updates: Partial<PumpOpsEvent>, expectedEvent?: PumpOpsEvent) => Promise<void>;
   startRepair: (eventId: string, notes?: string) => Promise<void>;
   returnToService: (eventId: string, notes?: string) => Promise<void>;
   markDerated: (params: {
@@ -618,19 +539,13 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             setCurrentStageState(data.currentStage);
           }
 
-          // Sync full 24 station directory to Firestore if missing any of the 24
-          if (existingStations.length < 24) {
-            try {
-              await setDoc(fleetDocRef, { stations: mergedStations }, { merge: true });
-            } catch (err) {
-              console.warn('Could not auto-sync 24 stations to Firestore:', err);
-            }
-          }
-        } else {
-          // Initialize Fleet 1 with default data if doc doesn't exist yet
+        } else if (!snapshot.metadata.fromCache) {
+          // Initialize only after a confirmed server absence, without racing another client.
           try {
-            await setDoc(fleetDocRef, DEFAULT_FLEET_DATA);
-            setFleet(DEFAULT_FLEET_DATA);
+            await runTransaction(db, async (tx) => {
+              const latest = await tx.get(fleetDocRef);
+              if (!latest.exists()) tx.set(fleetDocRef, DEFAULT_FLEET_DATA);
+            });
           } catch (err) {
             console.warn('Could not auto-initialize fleet1 doc on server:', err);
           }
@@ -752,7 +667,6 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             pump: data.pump || '',
             eventType: (data.eventType as PumpOpEventType) || 'pump_down',
             status: (data.status as PumpOpStatus) || 'RUNNING',
-            stage: data.stage ?? null,
             category: data.category || undefined,
             component: data.component || undefined,
             holes: Array.isArray(data.holes) ? data.holes : undefined,
@@ -780,60 +694,7 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           });
         });
 
-        // Ensure local optimistic/pending events not yet reflected on Firestore are merged
-        setPumpOpsEvents((prevEvents) => {
-          const snapshotIds = new Set(events.map((e) => e.id));
-          const prevMap = new Map(prevEvents.map((e) => [e.id, e]));
-
-          // Merge server events with pending local events using stable event IDs
-          const mergedServerEvents = events.map((serverEv) => {
-            const localEv = prevMap.get(serverEv.id);
-            const hasQueuedWrite = queuedEventIds.has(serverEv.id);
-            const isLocalPending = localEv && (localEv._pendingSync || hasQueuedWrite);
-
-            if (isLocalPending && hasQueuedWrite) {
-              // Local changes have not synced to server yet; preserve local pending edits
-              return {
-                ...serverEv,
-                ...localEv,
-                _pendingSync: true,
-              };
-            }
-
-            // If write has synced to Firestore and no pending write in queue, remove pending indicator
-            const isPending = Boolean(serverEv._pendingSync || hasQueuedWrite);
-            return {
-              ...serverEv,
-              _pendingSync: isPending,
-            };
-          });
-
-          // Also keep any local pending events that are not yet on the server snapshot
-          const unsyncedLocal = prevEvents.filter(
-            (e) => (e._pendingSync || queuedEventIds.has(e.id)) && !snapshotIds.has(e.id)
-          );
-
-          // And recover any events present in the offline queue that might not be in prevEvents (e.g. after refresh)
-          const localKnownIds = new Set([...snapshotIds, ...unsyncedLocal.map((e) => e.id)]);
-          const recoveredFromQueue: PumpOpsEvent[] = [];
-          queuedItems
-            .filter((q) => q.path.includes('/pumpOpsEvents/'))
-            .forEach((q) => {
-              const eventId = q.path.split('/').pop();
-              if (eventId && !localKnownIds.has(eventId) && q.data) {
-                recoveredFromQueue.push({
-                  ...q.data,
-                  id: eventId,
-                  _pendingSync: true,
-                });
-                localKnownIds.add(eventId);
-              }
-            });
-
-          const all = [...mergedServerEvents, ...unsyncedLocal, ...recoveredFromQueue];
-          all.sort((a, b) => b.startedAt - a.startedAt);
-          return all;
-        });
+        setPumpOpsEvents((previous) => mergeQueuedEvents(events, previous, queuedItems));
       },
       (error) => {
         console.warn('pumpOpsEvents listener error:', error);
@@ -879,6 +740,7 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return;
       }
 
+      let confirmedFleet: FleetDoc | undefined;
       try {
         const fleetDocRef = doc(db, 'fleets', 'fleet1');
         await runTransaction(db, async (tx) => {
@@ -886,21 +748,15 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           const currentServerData: FleetDoc = sfDoc.exists()
             ? (sfDoc.data() as FleetDoc)
             : DEFAULT_FLEET_DATA;
+          confirmedFleet = currentServerData;
           const merged = applyFleetMutation(currentServerData, mutation);
-          tx.set(fleetDocRef, sanitizeFirestoreData(merged), { merge: true });
+          tx.set(fleetDocRef, sanitizeFirestoreData(merged));
         });
       } catch (err) {
         if (err instanceof AssignmentConflictError || (err as any)?.isAssignmentConflict) {
           console.warn('Assignment conflict detected during transaction:', err);
           // Revert optimistic fleet update to preserve confirmed server state
-          setFleet((prev) => {
-            try {
-              const raw = localStorage.getItem(CACHE_FLEET_KEY);
-              return raw ? JSON.parse(raw) : prev;
-            } catch {
-              return prev;
-            }
-          });
+          if (confirmedFleet) setFleet(confirmedFleet);
           recordAssignmentConflict({
             station: (err as any).station,
             currentPump: (err as any).currentPump,
@@ -967,7 +823,6 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         pump: eventData.pump || '',
         eventType: eventData.eventType || 'pump_down',
         status: eventData.status || 'RUNNING',
-        stage: eventData.stage !== undefined ? eventData.stage : null,
         category: eventData.category?.trim() || undefined,
         component: eventData.component?.trim() || undefined,
         holes: Array.isArray(eventData.holes) && eventData.holes.length > 0 ? eventData.holes : undefined,
@@ -980,7 +835,7 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             ? eventData.downAt
               ? Number(eventData.downAt)
               : null
-            : eventData.status === 'DOWN'
+            : eventData.status === 'DOWN' || eventData.status === 'REPAIRING'
             ? startedAt
             : null,
         repairStartedAt: eventData.repairStartedAt ? Number(eventData.repairStartedAt) : null,
@@ -1060,13 +915,14 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   );
 
   const updatePumpOpEvent = useCallback(
-    async (id: string, updates: Partial<PumpOpsEvent>) => {
+    async (id: string, updates: Partial<PumpOpsEvent>, expectedEvent?: PumpOpsEvent) => {
       const now = Date.now();
       const existing = pumpOpsEvents.find((e) => e.id === id);
+      if (!existing) throw new Error('Issue not found. Reload the latest data before editing.');
+      const { patch, expected } = buildEventPatch(expectedEvent || existing, updates, now);
 
       const mergedUpdates: Partial<PumpOpsEvent> = {
-        ...updates,
-        updatedAt: now,
+        ...patch,
         _pendingSync: true,
       };
 
@@ -1075,14 +931,14 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         prev.map((e) => (e.id === id ? { ...e, ...mergedUpdates } : e))
       );
 
-      // Merge with existing full document data so all required fields are present
-      const fullDoc = existing ? { ...existing, ...mergedUpdates } : mergedUpdates;
-      const firestorePayload = sanitizeFirestoreData(fullDoc);
+      // Send only changed fields; rules validate the resulting merged document.
+      const firestorePayload = sanitizeFirestoreData(patch);
       const docPath = `fleets/fleet1/pumpOpsEvents/${id}`;
 
-      if (!navigator.onLine || !user) {
+      if (!navigator.onLine || !user || getQueuedWrites().some((q) => q.path === docPath)) {
         enqueueWrite({
-          type: 'set',
+          type: 'event-update',
+          expected,
           path: docPath,
           data: firestorePayload,
         });
@@ -1092,13 +948,22 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       try {
         const eventRef = doc(db, 'fleets', 'fleet1', 'pumpOpsEvents', id);
-        await setDoc(eventRef, firestorePayload, { merge: true });
+        await runTransaction(db, async (tx) => {
+          const snapshot = await tx.get(eventRef);
+          if (!snapshot.exists()) throw new WriteConflictError();
+          validateEventPatch(snapshot.data(), firestorePayload, expected);
+          tx.update(eventRef, firestorePayload);
+        });
 
         // Confirmed saved and synced!
         setPumpOpsEvents((prev) =>
           prev.map((e) => (e.id === id ? { ...e, _pendingSync: false } : e))
         );
       } catch (err) {
+        if (err instanceof WriteConflictError) {
+          setPumpOpsEvents((prev) => prev.map((e) => e.id === id ? existing : e));
+          throw err;
+        }
         const errCode = (err as any)?.code || 'unknown';
         const errMessage = err instanceof Error ? err.message : String(err);
         console.warn(
@@ -1113,7 +978,8 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         );
 
         enqueueWrite({
-          type: 'set',
+          type: 'event-update',
+          expected,
           path: docPath,
           data: firestorePayload,
         });
@@ -1133,8 +999,7 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (!ev) return;
       const now = Date.now();
       const updates: Partial<PumpOpsEvent> = {
-        status: 'REPAIRING',
-        repairStartedAt: now,
+        ...getIssueStatusPatch(ev, 'REPAIRING', now),
         updatedAt: now,
         notes: notes?.trim() ? (ev.notes ? `${ev.notes} • ${notes.trim()}` : notes.trim()) : ev.notes,
       };
@@ -1148,11 +1013,7 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const ev = pumpOpsEvents.find((e) => e.id === eventId);
       if (!ev) return;
       const now = Date.now();
-      const downStart = ev.downAt || ev.startedAt;
-      const downtime =
-        ev.status === 'DERATED' && !ev.downAt
-          ? 0
-          : Math.max(1, Math.round((now - downStart) / 60000));
+      const downtime = getResolvedDowntime(ev, now);
       const updates: Partial<PumpOpsEvent> = {
         status: 'RUNNING',
         resolvedAt: now,
@@ -1183,7 +1044,6 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         pump: params.pump,
         eventType: 'derated',
         status: 'DERATED',
-        stage: params.stage ?? null,
         category: 'DERATED',
         component: params.reason,
         limitation: params.limitation?.trim() || undefined,
@@ -1214,7 +1074,6 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         pump: params.pump,
         eventType: 'watch_item',
         status: 'RUNNING',
-        stage: params.stage ?? null,
         category: params.category?.trim() || 'FLUID END',
         component: params.component?.trim() || 'WATCH',
         holes: params.holes && params.holes.length > 0 ? params.holes : undefined,
@@ -1359,43 +1218,7 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       date: string;
       shift?: ShiftWithLegacy;
     } | null => {
-      if (!pumpNumber) return null;
-      const cleanPump = pumpNumber.trim().toLowerCase();
-      const targetKey = getShiftChronologicalKey(beforeDate, beforeShift);
-
-      // Filter all logs for this pump with date+shift strictly < targetKey that have at least one reading
-      const matching = allLogs.filter((l) => {
-        if (l.pumpNumber.trim().toLowerCase() !== cleanPump) return false;
-        const logKey = getShiftChronologicalKey(l.date, l.shift);
-        if (logKey >= targetKey) return false;
-        return l.pumpHours !== null || l.deckEngHours !== null;
-      });
-
-      if (matching.length === 0) return null;
-
-      // Sort descending by chronological key, then updatedAt
-      matching.sort((a, b) => {
-        const keyA = getShiftChronologicalKey(a.date, a.shift);
-        const keyB = getShiftChronologicalKey(b.date, b.shift);
-        const comp = keyB.localeCompare(keyA);
-        if (comp !== 0) return comp;
-        return b.updatedAt - a.updatedAt;
-      });
-
-      // Independently find the most recent valid previous pumpHours reading
-      const latestPumpLog = matching.find((l) => l.pumpHours !== null && l.pumpHours !== undefined);
-
-      // Independently find the most recent valid previous deckEngHours reading
-      const latestDeckLog = matching.find((l) => l.deckEngHours !== null && l.deckEngHours !== undefined);
-
-      if (!latestPumpLog && !latestDeckLog) return null;
-
-      return {
-        pumpHours: latestPumpLog ? latestPumpLog.pumpHours : null,
-        deckEngHours: latestDeckLog ? latestDeckLog.deckEngHours : null,
-        date: latestPumpLog?.date || latestDeckLog?.date || beforeDate,
-        shift: latestPumpLog?.shift || latestDeckLog?.shift || beforeShift,
-      };
+      return findPreviousReading(allLogs, pumpNumber, beforeDate, beforeShift);
     },
     [allLogs, activeShift]
   );
@@ -1590,7 +1413,7 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (!cleanStation || !cleanPump) return;
 
       const currentPumps = fleet.stationPumps?.[cleanStation] || [];
-      const expectedOld = expectedOldPump ?? (currentPumps.length === 1 ? currentPumps[0] : undefined);
+      const expectedOld = expectedOldPump ?? (currentPumps[0] || '');
 
       await updateFleetWithTransaction({
         type: 'assign-pump',
