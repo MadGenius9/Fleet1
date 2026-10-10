@@ -1,0 +1,36 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    match /fieldline/{fleet}/entities/{id} {
+      allow read: if signedIn();
+      function valid() {
+        return request.resource.data.id == id && request.resource.data.rev is int &&
+          request.resource.data.kind in ['pump','assignment','issue','reading','sheet','movement','service','handoff','audit'];
+      }
+      allow create: if signedIn() && valid() && request.resource.data.rev == 1;
+      allow update: if signedIn() && valid() && request.resource.data.rev == resource.data.rev + 1 &&
+        request.resource.data.kind == resource.data.kind &&
+        resource.data.kind in ['pump','assignment','issue','reading','sheet'] &&
+        (resource.data.kind != 'pump' || !resource.data.hasHistory || request.resource.data.hasHistory) &&
+        (resource.data.kind != 'issue' ||
+          (request.resource.data.pumpId == resource.data.pumpId &&
+           request.resource.data.station == resource.data.station &&
+           request.resource.data.openedAt == resource.data.openedAt &&
+           request.resource.data.createdBy == resource.data.createdBy)) &&
+        (resource.data.kind != 'reading' ||
+          (request.resource.data.pumpId == resource.data.pumpId &&
+           request.resource.data.station == resource.data.station &&
+           request.resource.data.date == resource.data.date &&
+           request.resource.data.shift == resource.data.shift));
+      allow delete: if signedIn() && resource.data.kind == 'pump' && !resource.data.hasHistory;
+    }
+    match /fieldline/{fleet}/operations/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.id == id &&
+        request.resource.data.authUid == request.auth.uid && request.resource.data.actor is string &&
+        request.resource.data.at is number;
+      allow update, delete: if false;
+    }
+  }
+}
