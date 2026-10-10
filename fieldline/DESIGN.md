@@ -38,7 +38,7 @@ mode and sync conflicts. There is no redundant More menu or dashboard hierarchy.
 Industrial daylight tool: white surfaces, cool gray #f4f5f7 canvas, ink #16212c,
 red #A83232 primary actions, restrained 6px corners, open lists and thin dividers.
 System sans typography, 16px body, 12–14px supporting text, 32px screen titles.
-48px minimum controls, distinct textual statuses with consistent color dots.
+48px minimum phone controls (40px compact desktop controls), distinct textual statuses with consistent color dots.
 Desktop roster with a work rail; mobile reduces columns rather than shrinking
 text. No images are needed in the functional app; all UI is native HTML.
 A generated primary-screen concept guides layout/tokens; functional state/data,
@@ -47,6 +47,7 @@ clock dates and accessible responsive details may differ deliberately.
 ## Data model
 
 Each record is a versioned entity in fieldline/{fleetId}/entities/{id}:
+
 - Pump: immutable ID, number, location, condition, control software, fluid end brand.
 - Assignment: station ID and pump ID (or null), independent of pump condition.
 - Issue: ID, pump, original station, category/component/holes, status, Watch flag,
@@ -57,8 +58,8 @@ Each record is a versioned entity in fieldline/{fleetId}/entities/{id}:
 - Service: actually completed work, separately from movement/pull reasons.
 - Handoff: immutable snapshot of issues, Watch, repairs, swaps, lineup and notes.
 - Audit: command ID, actor, timestamp and changed record IDs for permanent history.
-No Stage fields. Shared equipment constants and derived status live in domain/.
-Pump location, assignment and condition are never represented by one status field.
+  No Stage fields. Shared equipment constants and derived status live in domain/.
+  Pump location, assignment and condition are never represented by one status field.
 
 ## Offline and sync
 
@@ -74,7 +75,7 @@ stop dependent commands, and are plainly displayed with review/export/discard
 options. Discard is explicit and exports recovery data first when requested.
 A single browser Web Lock serializes queue drains across tabs, and IndexedDB
 transactions serialize storage changes. Queued changes to a finalized sheet
-also guard the sheet revision. Offline local data is scoped by mode and fleet.
+also guard the sheet revision. Offline local data is scoped by mode, project, database, and fleet.
 Demo uses the same command/domain/storage path, backed by durable local server
 state. It never makes Firebase calls. A simulation control pauses demo sync and
 can introduce a newer server revision for conflict evaluation.
@@ -82,7 +83,7 @@ can introduce a newer server revision for conflict evaluation.
 ## Backend and deployment
 
 React/TypeScript/Vite + Firebase retained: no reason to change the crew's default
-stack. New VITE_FIELDLINE_* configuration is distinct from the old project.
+stack. New VITE*FIELDLINE*\* configuration is distinct from the old project.
 Anonymous Auth is supported for initial evaluation; production access policies
 must be reviewed before deployment. The included rules restrict namespace access
 to signed-in users and preserve revision/receipt protocol. No old data is mutated.
@@ -116,3 +117,28 @@ resolved timestamps and legacy dates. Reconcile duplicate pump IDs/station
 assignments explicitly; never silently merge or replace live records. Import in
 a new namespace with stable source IDs, receipts, dry-run counts and operator
 review. No importer or automatic production migration is run by this app.
+
+## Implementation comparison and verification
+
+The generated concept and rendered 1440px desktop / 390px phone screens were
+inspected with view_image. Compared features: (1) the four-item left navigation
+and fixed mobile bottom navigation, (2) white station roster plus right work rail,
+(3) cool-gray canvas, ink typography, company-red primary action, (4) distinct
+status dots with text labels and thin dividers, (5) station/pump rows with one View
+action and stacked mobile details, (6) a prominent Enter hours action. All six
+are implemented. Deliberate differences: six status counts include Watch; actual
+issues/clock values replace concept fixtures; taller rows and 48px phone controls
+accommodate gloves; searchable lineup and retained identities add working depth.
+Previous meter values sit below inputs so four-digit readings remain readable on
+phones. Forms have explicit label associations, a keyboard focus trap and Escape
+close. Native Playwright/Chromium was used because no Browser tool is available.
+
+25 domain/queue tests pass. The full browser workflow passes against both Vite
+and the built app, including actual IndexedDB persistence, tab broadcast, PDF
+printing, conflict UI, and offline reload/edit/reload of the production shell.
+The offline test found Vite's Vary: Origin header prevented asset cache hits;
+shell lookups now ignore Vary for this origin's cached build assets. Firebase is
+loaded on demand rather than inflating the demo's initial JavaScript bundle.
+The emulator binary download returned HTTP 403 Domain forbidden. Deployed
+Firebase rules, real SDK transactions/subscriptions and two-device reconnection
+remain external checks, not inferred from the in-memory or local-demo tests.

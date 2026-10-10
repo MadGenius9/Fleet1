@@ -1,3 +1,11 @@
+## New FIELDLINE app
+
+The new field maintenance app is in [`fieldline/`](fieldline/README.md). Run
+`npm run fieldline:dev` from this repository root for the 18-station local demo.
+See its [capability map and setup guide](fieldline/README.md) and
+[design decisions](fieldline/DESIGN.md). The application below remains the domain
+reference; its original commands and Firebase configuration are separate.
+
 # Fleet 1 Pump Hours
 
 The existing React / TypeScript / Vite application for pump hours, inventory,
